@@ -14,26 +14,46 @@ Operationalize invoice data extraction end-to-end: upload an invoice image → e
 
 ---
 
+## 🗺️ Table of Contents
+
+- [Project Structure](#-project-structure)  
+- [Quick Start](#-quick-start)  
+  - [Backend](#1-backend--setup--run)  
+  - [Frontend](#2-frontend--setup--run)  
+- [How It Works](#-how-it-works)  
+- [API Reference](#-api-reference)  
+- [Data Model](#-data-model-rows-in-sheetsexcel)  
+- [Environment Variables](#-environment-variables-backend)  
+- [Troubleshooting](#-troubleshooting)  
+- [Performance Notes](#-performance-notes)  
+- [Security](#-security--pii)  
+- [Roadmap](#-roadmap)  
+- [License](#-license)
+
+---
+
 ## 📦 Project Structure
 
+```
 invoice-extractor-e2e/
 ├─ backend/
-│ ├─ app.py
-│ ├─ .env # backend env (see templates below)
-│ ├─ requirements.txt
-│ ├─ invoice-extractor-sa.json # (optional) Google service-account key file
-│ └─ data/
-│ └─ invoices.xlsx # Excel sink (if enabled)
+│  ├─ app.py
+│  ├─ .env                      # backend env (see template below)
+│  ├─ requirements.txt
+│  ├─ invoice-extractor-sa.json # (optional) Google service-account key file
+│  └─ data/
+│     └─ invoices.xlsx          # Excel sink (if enabled)
 ├─ frontend/
-│ ├─ package.json
-│ ├─ .env.local # frontend env (see templates below)
-│ └─ app/ ... components/ ...
-└─ best_model/ # your trained model folder
-├─ config.json
-├─ preprocessor_config.json
-├─ tokenizer.json (and/or vocab.json + merges.txt)
-├─ special_tokens_map.json
-└─ model.safetensors (or pytorch_model.bin)
+│  ├─ package.json
+│  ├─ .env.local                # frontend env (see template below)
+│  └─ app/ ... components/ ...
+└─ best_model/                  # your trained model folder
+   ├─ config.json
+   ├─ preprocessor_config.json
+   ├─ tokenizer.json            # (and/or vocab.json + merges.txt)
+   ├─ special_tokens_map.json
+   └─ model.safetensors         # (or pytorch_model.bin)
+```
 
 > The **`best_model/`** directory must directly contain `config.json`, `tokenizer.json`, and weights.
 
@@ -45,7 +65,7 @@ invoice-extractor-e2e/
 
 - **Python 3.11+**, **Node 20+**  
 - macOS: `brew install tesseract`  
-- Linux: `sudo apt-get update && sudo apt-get install -y tesseract-ocr`
+- Ubuntu/Debian: `sudo apt-get update && sudo apt-get install -y tesseract-ocr`
 
 ### 1) Backend — Setup & Run
 
@@ -53,9 +73,11 @@ invoice-extractor-e2e/
 cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+```
 
-Create backend/.env (adjust paths; quotes matter if your paths have spaces):
+Create **`backend/.env`** (adjust paths; **quote paths with spaces**):
 
+```dotenv
 # --- model & server ---
 MODEL_DIR="/absolute/or/quoted/path/to/invoice-extractor-e2e/best_model"
 MAX_LENGTH=512
@@ -75,74 +97,77 @@ GOOGLE_APPLICATION_CREDENTIALS=./invoice-extractor-sa.json
 # GOOGLE_CRED_JSON={"type":"service_account","project_id":"...","client_email":"...@...iam.gserviceaccount.com","private_key":"-----BEGIN PRIVATE KEY-----\n..."}
 ```
 
-Service account: In Google Cloud → IAM & Admin → Service Accounts → your SA → Keys → Add key → JSON.
-Save the file as backend/invoice-extractor-sa.json. Then share the Google Sheet with the client_email from that file as Editor.
+> **Service account**: Google Cloud → IAM & Admin → Service Accounts → *your SA* → **Keys → Add key → JSON**.  
+> Save as `backend/invoice-extractor-sa.json`. Then **share the Google Sheet** with the **`client_email`** from that file as **Editor**.
 
 Run the API:
-```
+
+```bash
 source .venv/bin/activate
 python -m uvicorn app:app --host 0.0.0.0 --port 8000 --reload
-Health checks:
 ```
+
+Health checks:
+
+```bash
 curl -s http://localhost:8000/health | jq
 curl -s http://localhost:8000/where  | jq
-
-You want /where to show a non-empty service_account_email and your configured sink.
-
-2) Frontend — Setup & Run
 ```
+
+You want `/where` to show a non-empty `service_account_email` and your configured sink.
+
+---
+
+### 2) Frontend — Setup & Run
+
+```bash
 cd ../frontend
 npm install
 ```
-Create frontend/.env.local:
 
+Create **`frontend/.env.local`**:
+
+```dotenv
 NEXT_PUBLIC_API_BASE=http://localhost:8000
+```
 
 Launch:
-```
+
+```bash
 npm run dev
 # open http://localhost:3000
 ```
-Upload an invoice image; watch rows materialize in your Google Sheet rows tab (or Excel file).
 
-🧠 How It Works
-OCR via Tesseract → per-word transcripts + bounding boxes (normalized to 0–1000).
+Upload an invoice image; watch rows materialize in your Google Sheet **rows** tab (or Excel file).
 
-Encoding using AutoProcessor for LayoutLMv3.
+---
 
-Model Inference (LayoutLMv3ForTokenClassification) over tokens.
+## 🧠 How It Works
 
-BIO Aggregation → word-level entity spans.
+1. **OCR** via Tesseract → per-word transcripts + bounding boxes (normalized to 0–1000).  
+2. **Encoding** using `AutoProcessor` for LayoutLMv3.  
+3. **Model Inference** (`LayoutLMv3ForTokenClassification`) over tokens.  
+4. **BIO Aggregation** → word-level entity spans (COMPANY, DATE, TOTAL, etc.).  
+5. **Heuristics**:
+   - **Total**: keyword proximity (“TOTAL/AMOUNT DUE”), sanity filters, max-amount fallback.
+   - **Dates**: multi-format parsing + jammed `mmdd/yyyy` fix + year sanity check.
+   - **Invoice No**: keyword adjacency; must contain digits.
+   - **Line Items**: header synonyms (`QTY|Quantity|Rate|Unit Price|Item|Desc`) + y-row grouping.
+6. **Persistence**: append **one row per item** (Company, Invoice No, Dates repeated per item) to:
+   - Google Sheets `"rows"` tab, and/or
+   - Excel workbook at `EXCEL_PATH`.
 
-Heuristics:
+---
 
-Total: keyword proximity (to the right of “TOTAL/AMOUNT DUE...”), sanity filters, max-amount fallback (ignores stray tiny integers).
+## 🛠 API Reference
 
-Dates: format detection + year clamping (1990…next year) + jammed “mmdd/yyyy” fix.
-
-Invoice No: keyword adjacency + top-right fallback, must contain digits.
-
-Line Items: flexible header synonyms (QTY|Quantity|Rate|Unit Price|Item|Desc) + row grouping with dynamic y-tolerance.
-
-Persistence: append one row per item (Company, Invoice No, Dates repeated per item) to:
-
-Google Sheets "rows" tab, and/or
-
-Excel workbook at EXCEL_PATH.
-
-🛠 API Reference
-GET /health → basic readiness + label set.
-
-GET /where → sink & credentials diagnostics (Sheets/Excel paths, SA email).
-
-GET /download → Excel file (if Excel sink enabled).
-
-POST /predict (multipart form):
-
-form field: file=@/path/to/invoice.jpg
-
-response:
-```
+**GET `/health`** → basic readiness + label set  
+**GET `/where`** → sink & credentials diagnostics (Sheets/Excel paths, SA email)  
+**GET `/download`** → Excel file (when Excel sink enabled)  
+**POST `/predict`** (multipart form):
+- form field: `file=@/path/to/invoice.jpg`  
+- response:
+```json
 {
   "fields": {
     "COMPANY": "...",
@@ -152,115 +177,95 @@ response:
     "TOTAL": "123.45"
   },
   "items": [
-    {"DESCRIPTION":"...", "QTY":1, "UNIT_PRICE":"15.00", "AMOUNT":"15.00"}
+    { "DESCRIPTION":"...", "QTY":1, "UNIT_PRICE":"15.00", "AMOUNT":"15.00" }
   ],
   "wrote": ["gsheets", "excel:./data/invoices.xlsx"],
   "errors": []
 }
-
-cURL test:
-
-curl -s -F "file=@/absolute/path/to/sample-invoice.jpg" \
-  http://localhost:8000/predict | jq
 ```
-🧾 Data Model (Rows in Sheets/Excel)
-Columns (flat, one row per line item):
 
+**cURL test**
+```bash
+curl -s -F "file=@/absolute/path/to/sample-invoice.jpg"   http://localhost:8000/predict | jq
+```
 
+---
+
+## 🧾 Data Model (Rows in Sheets/Excel)
+
+Columns (flat, one row per **line item**):
+
+```
 COMPANY | INVOICE_NO | DATE | DUE_DATE | ITEM_DESCRIPTION | QTY | UNIT_PRICE | AMOUNT | TOTAL
-TOTAL is repeated per item (denormalized for analysis convenience).
+```
 
-If no items detected, a single row with metadata and blank item fields is still added.
+- `TOTAL` is repeated per item (denormalized for analysis convenience).  
+- If no items are detected, a single row with metadata and blank item fields is still added.
 
-⚙️ Environment Variables (Backend)
-Var	Purpose	Example
-MODEL_DIR	Path to trained model folder (must contain config.json, tokenizer, weights)	"/…/invoice-extractor-e2e/best_model"
-MAX_LENGTH	LayoutLMv3 sequence length	512
-ALLOWED_ORIGINS	CORS	* or http://localhost:3000
-WRITE_SINK	excel, gsheets, or both	gsheets
-EXCEL_PATH	Excel file path (if Excel sink used)	./data/invoices.xlsx
-GSHEETS_ID	Google Sheet ID	1TRKGL…VR0
-GOOGLE_APPLICATION_CREDENTIALS	Path to service-account JSON	./invoice-extractor-sa.json
-GOOGLE_CRED_JSON	One-line JSON for service account (alternative to file)	{"type":"service_account",...}
+---
 
-If both GOOGLE_CRED_JSON and GOOGLE_APPLICATION_CREDENTIALS are set, the app prioritizes the inline JSON.
+## ⚙️ Environment Variables (Backend)
 
-🧰 Troubleshooting
-Frontend/Node: uv_cwd or Backend/Uvicorn: getcwd FileNotFoundError
-Your terminal’s current directory vanished (moved/unmounted). Fix: cd back into a real folder before running npm/uvicorn. Paths with spaces must be quoted.
+| Var | Purpose | Example |
+|---|---|---|
+| `MODEL_DIR` | Path to trained model folder (must contain `config.json`, tokenizer, weights) | `"/…/invoice-extractor-e2e/best_model"` |
+| `MAX_LENGTH` | LayoutLMv3 sequence length | `512` |
+| `ALLOWED_ORIGINS` | CORS | `*` or `http://localhost:3000` |
+| `WRITE_SINK` | `excel`, `gsheets`, or `both` | `gsheets` |
+| `EXCEL_PATH` | Excel file path (if Excel sink used) | `./data/invoices.xlsx` |
+| `GSHEETS_ID` | Google Sheet ID | `1TRKGL…VR0` |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Path to service-account JSON | `./invoice-extractor-sa.json` |
+| `GOOGLE_CRED_JSON` | One-line JSON for service account (alternative to file) | `{"type":"service_account", ...}` |
 
-HF 401 / “best_model is not a local folder”
-MODEL_DIR isn’t resolving to your local folder, so transformers tries to pull from Hugging Face.
-Fix: set MODEL_DIR to an absolute path (quoted if spaces) pointing at the folder containing config.json and weights.
+> If **both** `GOOGLE_CRED_JSON` and `GOOGLE_APPLICATION_CREDENTIALS` are set, the app prioritizes the **inline JSON**.
 
-Sheets write fails
+---
 
-Ensure GSHEETS_ID is set.
+## 🧰 Troubleshooting
 
-/where should show a service_account_email.
+**Frontend/Node: `uv_cwd` or Backend/Uvicorn: `getcwd` FileNotFoundError**  
+Your shell’s current directory vanished (moved/unmounted). **Fix:** `cd` back into a valid folder before running `npm`/`uvicorn`. **Quote** paths with spaces.
 
-Share the Sheet with that email as Editor.
+**HF 401 / “best_model is not a local folder”**  
+`MODEL_DIR` isn’t resolving to your local folder, so `transformers` tries Hugging Face.  
+**Fix:** point `MODEL_DIR` to the local folder containing `config.json` + weights (absolute path recommended).
 
-Use only service account keys (not OAuth client IDs).
+**Google Sheets write fails**  
+- Ensure `GSHEETS_ID` is set.  
+- `/where` should show a **service_account_email**.  
+- **Share the Sheet** with that email as **Editor**.  
+- Use **service account** keys, not OAuth client IDs.
 
-Totals wrong or 1.00
-Heuristics ignore tiny integers and prefer item-sum if the model’s total is implausible. If a layout still fights you, add a vendor-specific rule.
+**Totals wrong or `1.00`**  
+Heuristics ignore stray small integers and favor proximity/max-amount logic. If a layout still misbehaves, add vendor-specific rules.
 
-No line items
-Headers vary. We match synonyms (Quantity|Qty|Q, Description|Item|Details, Unit Price|Rate, Amount|Line Total). If columns are extremely custom, extend the synonyms list.
+**No line items detected**  
+Headers vary. We match synonyms (`Quantity|Qty|Q`, `Description|Item|Details`, `Unit Price|Rate`, `Amount|Line Total`). Extend the synonyms if your template is exotic.
 
-🧪 Sample End-to-End Test Script
-bash
-Copy
-Edit
-# Backend up?
-curl -s http://localhost:8000/health | jq
+---
 
-# Sink & creds wiring ok?
-curl -s http://localhost:8000/where | jq
+## 📈 Performance Notes
 
-# Inference test
-curl -s -F "file=@/path/to/invoice.jpg" http://localhost:8000/predict | jq
+- Apple Silicon: prebuilt `torch` wheels for arm64 work well; CPU is fine for small loads.  
+- OCR is often the bottleneck (Tesseract). Consider tuning `--psm 6` or swapping OCR backends when scaling.  
+- Increase `MAX_LENGTH` cautiously; very long sequences may slow inference.
 
-# If using Excel sink, download it
-curl -s -OJ http://localhost:8000/download
-📈 Performance Notes
-Apple Silicon: torch wheels for arm64; CPU is fine for small loads.
+---
 
-Throughput: Tesseract is often the bottleneck; consider --psm 6 tuning or offloading OCR if scaling.
+## 🔐 Security & PII
 
-Increase MAX_LENGTH cautiously; very long sequences may degrade speed.
-
-🔐 Security & PII
 Invoices contain PII/financial data. Treat artifacts accordingly:
+- Keep service-account keys **out of version control**.
+- Restrict CORS in production.
+- Lock down the Sheet to required stakeholders only.
 
-Keep service-account keys out of VCS.
+---
 
-Restrict CORS in production.
+## 🧭 Roadmap
 
-Lock down the Sheets file to required stakeholders only.
+- PDF ingestion (multi-page)  
+- Multi-currency support  
+- Vendor-specific parsing plugins  
+- Optional DocTR/OCRmyPDF backends
 
-🧭 Roadmap
-PDF ingestion (multi-page)
-
-Better multi-currency support
-
-Vendor-specific parsing plugins
-
-Optional DocTR/OCRmyPDF backends
-
-📝 License
-MIT (or your preferred license). See LICENSE.
-
-📮 Support
-If you hit an edge case, include:
-
-/where JSON output
-
-A redacted invoice snapshot
-
-Backend logs around /predict
-
-We’ll triage fast and keep your data pipeline on the happy path.
-
-
+---
