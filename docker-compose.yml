@@ -1,0 +1,25 @@
+version: "3.9"
+services:
+  backend:
+    build: ./backend
+    container_name: invoice-backend
+    environment:
+      - MODEL_DIR=/app/best_model
+      - EXCEL_PATH=/app/data/invoices.xlsx
+      - MAX_LENGTH=512
+      - ALLOWED_ORIGINS=*
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./best_model:/app/best_model:ro
+      - ./data:/app/data
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_BASE: http://backend:8000
+    container_name: invoice-frontend
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
