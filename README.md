@@ -73,35 +73,36 @@ GOOGLE_APPLICATION_CREDENTIALS=./invoice-extractor-sa.json
 
 # (OR inline JSON - leave the other one blank)
 # GOOGLE_CRED_JSON={"type":"service_account","project_id":"...","client_email":"...@...iam.gserviceaccount.com","private_key":"-----BEGIN PRIVATE KEY-----\n..."}
+```
 
 Service account: In Google Cloud → IAM & Admin → Service Accounts → your SA → Keys → Add key → JSON.
 Save the file as backend/invoice-extractor-sa.json. Then share the Google Sheet with the client_email from that file as Editor.
 
 Run the API:
-
+```
 source .venv/bin/activate
 python -m uvicorn app:app --host 0.0.0.0 --port 8000 --reload
 Health checks:
-
+```
 curl -s http://localhost:8000/health | jq
 curl -s http://localhost:8000/where  | jq
 
 You want /where to show a non-empty service_account_email and your configured sink.
 
 2) Frontend — Setup & Run
-
+```
 cd ../frontend
 npm install
-
+```
 Create frontend/.env.local:
 
 NEXT_PUBLIC_API_BASE=http://localhost:8000
 
 Launch:
-
+```
 npm run dev
 # open http://localhost:3000
-
+```
 Upload an invoice image; watch rows materialize in your Google Sheet rows tab (or Excel file).
 
 🧠 How It Works
@@ -141,7 +142,7 @@ POST /predict (multipart form):
 form field: file=@/path/to/invoice.jpg
 
 response:
-
+```
 {
   "fields": {
     "COMPANY": "...",
@@ -161,13 +162,11 @@ cURL test:
 
 curl -s -F "file=@/absolute/path/to/sample-invoice.jpg" \
   http://localhost:8000/predict | jq
-
+```
 🧾 Data Model (Rows in Sheets/Excel)
 Columns (flat, one row per line item):
 
-sql
-Copy
-Edit
+
 COMPANY | INVOICE_NO | DATE | DUE_DATE | ITEM_DESCRIPTION | QTY | UNIT_PRICE | AMOUNT | TOTAL
 TOTAL is repeated per item (denormalized for analysis convenience).
 
@@ -263,9 +262,5 @@ A redacted invoice snapshot
 Backend logs around /predict
 
 We’ll triage fast and keep your data pipeline on the happy path.
-
-Copy
-Edit
-
 
 
